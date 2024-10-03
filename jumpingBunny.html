@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>הרפתקאות הארנב הקופצני</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Varela+Round&display=swap');
+        
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: linear-gradient(to bottom, #87CEEB, #E0F7FA);
+            font-family: 'Varela Round', sans-serif;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 400px;
+            height: 400px;
+        }
+        
+        canvas {
+            border: 5px solid #4CAF50;
+            border-radius: 15px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        #gameOverScreen, #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            color: white;
+        }
+        
+        h1, h2 {
+            color: #FFD700;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 25px;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+            transform: scale(1.05);
+        }
+        
+        #score {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+        <div id="score">ניקוד: 0</div>
+        <div id="startScreen">
+            <h1>הרפתקאות הארנב הקופצני</h1>
+            <button id="startButton">התחל משחק</button>
+        </div>
+        <div id="gameOverScreen" style="display: none;">
+            <h2>המשחק נגמר</h2>
+            <p>הניקוד שלך: <span id="finalScore"></span></p>
+            <button id="restartButton">שחק שוב</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreSpan = document.getElementById('finalScore');
+        const restartButton = document.getElementById('restartButton');
+        const startScreen = document.getElementById('startScreen');
+        const startButton = document.getElementById('startButton');
+
+        // הגדרת משתנים גלובליים
+        const GROUND_LEVEL = 350;
+        const JUMP_FORCE = 12;
+        const GRAVITY = 0.6;
+
+        let rabbit = { x: 50, y: GROUND_LEVEL - 30, width: 30, height: 30, jumping: false, jumpHeight: 0, jumpSpeed: 0 };
+        let walls = [];
+        let carrots = [];
+        let hearts = 3;
+        let score = 0;
+        let gameSpeed = 2;
+        let lastWallTime = 0;
+        let clouds = [];
+        let isGameOver = false;
+        let isTouchDevice = false;
+        let explosion = null;
+
+        // בדיקה האם המכשיר תומך במגע
+        function checkTouchSupport() {
+            isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0;
+        }
+
+        // יצירת עננים
+        function createClouds() {
+            for (let i = 0; i < 5; i++) {
+                clouds.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * 80 + 40,
+                    speed: Math.random() * 0.5 + 0.1
+                });
+            }
+        }
+
+        // פונקציה ליצירת קיר חדש
+        function createWall() {
+            walls.push({ x: canvas.width, y: GROUND_LEVEL - 35, width: 20, height: 35, hit: false });
+            lastWallTime = Date.now();
+        }
+
+        // פונקציה ליצירת גזר חדש
+        function createCarrot() {
+            carrots.push({ x: canvas.width, y: GROUND_LEVEL - 40, width: 20, height: 20 });
+        }
+
+        // פונקציה לציור הרקע
+        function drawBackground() {
+            // שמיים
+            ctx.fillStyle = 'skyblue';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // שמש
+            ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(350, 80, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            // עננים
+            ctx.fillStyle = 'white';
+            clouds.forEach(cloud => {
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y + 30, 20, 0, Math.PI * 2);
+                ctx.arc(cloud.x + 15, cloud.y + 20, 15, 0, Math.PI * 2);
+                ctx.arc(cloud.x + 30, cloud.y + 30, 20, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // דשא
+            ctx.fillStyle = 'green';
+            ctx.fillRect(0, GROUND_LEVEL, canvas.width, canvas.height - GROUND_LEVEL);
+        }
+
+        // פונקציה לציור הארנב
+        function drawRabbit() {
+            let rabbitY = rabbit.y - rabbit.jumpHeight;
+
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.ellipse(rabbit.x + 15, rabbitY + 20, 15, 10, 0, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // אוזניים
+            ctx.fillStyle = 'pink';
+            ctx.beginPath();
+            ctx.ellipse(rabbit.x + 10, rabbitY + 5, 5, 15, -0.3, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(rabbit.x + 20, rabbitY + 5, 5, 15, 0.3, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // עיניים
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(rabbit.x + 10, rabbitY + 15, 2, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(rabbit.x + 20, rabbitY + 15, 2, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        // פונקציה לציור הקירות
+        function drawWalls() {
+            ctx.fillStyle = 'yellow';
+            walls.forEach(wall => {
+                ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            });
+        }
+
+        // פונקציה לציור הגזרים
+        function drawCarrots() {
+            carrots.forEach(carrot => {
+                // גוף הגזר
+                ctx.fillStyle = 'orange';
+                ctx.beginPath();
+                ctx.moveTo(carrot.x + 10, carrot.y);
+                ctx.quadraticCurveTo(carrot.x, carrot.y + 10, carrot.x + 5, carrot.y + 20);
+                ctx.quadraticCurveTo(carrot.x + 15, carrot.y + 20, carrot.x + 20, carrot.y);
+                ctx.closePath();
+                ctx.fill();
+                
+                // עלים
+                ctx.fillStyle = 'green';
+                ctx.beginPath();
+                ctx.moveTo(carrot.x + 10, carrot.y);
+                ctx.lineTo(carrot.x + 5, carrot.y - 10);
+                ctx.lineTo(carrot.x + 15, carrot.y - 10);
+                ctx.closePath();
+                ctx.fill();
+            });
+        }
+
+        // פונקציה לציור הלבבות
+        function drawHearts() {
+            ctx.save();
+            for (let i = 0; i < hearts; i++) {
+                const x = 20 + i * 40;
+                const y = 30;
+                const size = 15;
+
+                ctx.beginPath();
+                ctx.moveTo(x, y + size / 4);
+                ctx.quadraticCurveTo(x, y, x + size / 4, y);
+                ctx.quadraticCurveTo(x + size / 2, y, x + size / 2, y + size / 4);
+                ctx.quadraticCurveTo(x + size / 2, y, x + size * 3/4, y);
+                ctx.quadraticCurveTo(x + size, y, x + size, y + size / 4);
+                ctx.quadraticCurveTo(x + size, y + size / 2, x + size / 2, y + size * 3/4);
+                ctx.quadraticCurveTo(x, y + size / 2, x, y + size / 4);
+
+                // יצירת גרדיאנט
+                const gradient = ctx.createLinearGradient(x, y, x + size, y + size);
+                gradient.addColorStop(0, '#ff6b6b');
+                gradient.addColorStop(0.5, '#ff0000');
+                gradient.addColorStop(1, '#c50000');
+
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                // הוספת זוהר עדין
+                const glowGradient = ctx.createRadialGradient(x + size / 2, y + size / 2, size / 8, x + size / 2, y + size / 2, size / 2);
+                glowGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+                glowGradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+
+                ctx.fillStyle = glowGradient;
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        // פונקציה לציור הפיצוץ
+        function drawExplosion() {
+            if (explosion) {
+                ctx.beginPath();
+                ctx.arc(explosion.x, explosion.y, explosion.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 100, 100, ${explosion.opacity})`;
+                ctx.fill();
+                
+                explosion.radius += 0.5;
+                explosion.opacity -= 0.05;
+                
+                if (explosion.opacity <= 0) {
+                    explosion = null;
+                }
+            }
+        }
+		// פונקציה לעדכון מצב המשחק
+        function update() {
+            updateRabbit();
+            updateObjects();
+            checkCollisions();
+        }
+
+        function updateRabbit() {
+            if (rabbit.jumping) {
+                rabbit.jumpSpeed += GRAVITY;
+                rabbit.jumpHeight -= rabbit.jumpSpeed;
+
+                if (rabbit.jumpHeight <= 0) {
+                    rabbit.jumpHeight = 0;
+                    rabbit.jumping = false;
+                    rabbit.jumpSpeed = 0;
+                }
+            }
+        }
+
+        function updateObjects() {
+            walls.forEach(wall => {
+                wall.x -= gameSpeed;
+                if (wall.x + wall.width < 0) {
+                    walls.shift();
+                }
+            });
+
+            carrots.forEach(carrot => {
+                carrot.x -= gameSpeed;
+                if (carrot.x + carrot.width < 0) {
+                    carrots.shift();
+                }
+            });
+
+            clouds.forEach(cloud => {
+                cloud.x -= cloud.speed;
+                if (cloud.x < -50) {
+                    cloud.x = canvas.width + 50;
+                }
+            });
+
+            // יצירת קירות במרווחים גדולים יותר
+            if (Date.now() - lastWallTime > 3000) {
+                createWall();
+            }
+            
+            if (Math.random() < 0.01) createCarrot();
+        }
+
+        function checkCollisions() {
+            let rabbitY = rabbit.y - rabbit.jumpHeight;
+
+            // בדיקת התנגשויות עם קירות
+            walls.forEach(wall => {
+                if (!wall.hit &&
+                    rabbit.x < wall.x + wall.width &&
+                    rabbit.x + rabbit.width > wall.x &&
+                    rabbitY + rabbit.height > wall.y &&
+                    rabbitY < wall.y + wall.height) {
+                    hearts--;
+                    wall.hit = true;
+                    // יצירת אפקט פיצוץ
+                    explosion = {
+                        x: rabbit.x + rabbit.width / 2,
+                        y: rabbitY + rabbit.height / 2,
+                        radius: 5,
+                        opacity: 1
+                    };
+                    if (hearts <= 0) {
+                        gameOver();
+                    }
+                }
+            });
+
+            // בדיקת איסוף גזרים
+            carrots.forEach((carrot, index) => {
+                if (rabbit.x < carrot.x + carrot.width &&
+                    rabbit.x + rabbit.width > carrot.x &&
+                    rabbitY < carrot.y + carrot.height &&
+                    rabbitY + rabbit.height > carrot.y) {
+                    score++;
+                    carrots.splice(index, 1);
+                    updateScore();
+                }
+            });
+        }
+
+        // פונקציה לציור המשחק
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+            drawWalls();
+            drawCarrots();
+            drawRabbit();
+            drawHearts();
+            drawExplosion();
+        }
+
+        // לולאת המשחק הראשית
+        function gameLoop() {
+            if (!isGameOver) {
+                update();
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // פונקציה לסיום המשחק
+        function gameOver() {
+            isGameOver = true;
+            gameOverScreen.style.display = 'flex';
+            finalScoreSpan.textContent = score;
+        }
+
+        // פונקציה להתחלת המשחק מחדש
+        function restartGame() {
+            gameOverScreen.style.display = 'none';
+            startGame();
+        }
+
+        // פונקציה לעדכון הניקוד
+        function updateScore() {
+            document.getElementById('score').textContent = `ניקוד: ${score}`;
+        }
+
+        // פונקציה להתחלת המשחק
+        function startGame() {
+            startScreen.style.display = 'none';
+            isGameOver = false;
+            rabbit.y = GROUND_LEVEL - rabbit.height;
+            hearts = 3;
+            score = 0;
+            walls = [];
+            carrots = [];
+            rabbit.jumpHeight = 0;
+            rabbit.jumping = false;
+            updateScore();
+            createWall();
+            gameLoop();
+        }
+
+        // פונקציה לקפיצת הארנב
+        function jumpRabbit() {
+            if (!rabbit.jumping) {
+                rabbit.jumping = true;
+                rabbit.jumpSpeed = -JUMP_FORCE;
+            }
+        }
+
+        // האזנה לאירועי מקלדת
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'Space') {
+                jumpRabbit();
+            }
+        });
+
+        // האזנה לאירועי מגע
+        canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (isTouchDevice) {
+                jumpRabbit();
+            }
+        });
+
+        // האזנה לכפתורי התחלה מחדש והתחלת משחק
+        restartButton.addEventListener('click', restartGame);
+        startButton.addEventListener('click', startGame);
+
+        // אתחול המשחק
+        checkTouchSupport();
+        createClouds();
+    </script>
+</body>
+</html>
